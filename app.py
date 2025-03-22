@@ -11,20 +11,48 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "https://client-xqp2.onrender.com"}})  # Your React URL
 
-# Hardcoded Firebase credentials (for testing only - replace with env vars in production)
+# Hardcoded Firebase credentials for inventory-eec69 project
 firebase_credentials = {
     "type": "service_account",
-    "project_id": "esplorado-c5207",
-    "private_key_id": "0d542af3495b91042a219b553a1e501623f94763",
-    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCoXzhHKyIom/qH\nwJGnws5PZdX3b5N05N2vsnN6JBLogX/uhV8B3hq379tBvx7OA9EIL34mlQTjX4Oq\nvNpARqKgFmXPql+W8xqsjniDdftZaZfV1Sgc7FT/2ODgI7RGiPpHvk4BA5dLRZz4\nummGwh8Tze4r9Z3j9lVzMmiI+eqrMppO3lV1Q4Y9LTD4GlIwWeEGBstnE11/gzvm\nTnGZG2xh/33SNlTCwAxrHD85PACAuosZx2AfxIJCxtCXUA+yNJTjXqLTw53o/Rgy\nH0a0rsjNrbqlTiUFlqcnp6KeTHlI0Gynum2IhoCsoTF5b/zc8H1WjLk3SvNb3n/3\nw4eOzUEDAgMBAAECggEANZy8Ss0NP2kLSRakSorZLqb6jqNUjLAjdsKXypiZ/Lbf\niY+mRO34DAGwCytUH71PXg/hV1+0AsJzJnaj+DuFpPv8xzc04Nff8nobHaD/u+TH\nmCsbbrpCBoWEdVppGNyc9SM/q0r9bdZouTqCR4qgYqn74LuA3wmdA+VVK+iINKKP\nuEpO4MbBSqTWA2o44/3N6u+a5duqoe4O5SusMikMM+Hh3JnaynE0Our2tQ/8vs+i\nI0DxxwlRu1JuQ3o+5T5artIWKqe45Qx8h+kbgj5aEaruxt0rzMkQ3kx/tF1SHyst\nylT8Sxh/VNcy4XXzwDdHG8bE33FSFsV+DIrRzuzAoQKBgQDBJ1DgWsejjxc9GRHy\nnycYTh3p13Forh6jQ2tlLjLb+duXBWfB9ewHublSBRv8A43eNfv4AxGFSJwy/9UK\nf2MfW9bk6auNzF1nbzHanYPEvDJmwyEk0tP7xoF17FL7IWX+EH6tQh0JGZFhukDP\nnRXm+e6OW9bbYxvyq/9l6UnuDwKBgQDfJ7lWJrtCTQwt96nDDgASKulyi8YQ6mkN\nMBRyEaJdUCsX8CQcSqUGdTxvfC0lbg5jJpcu5XUAv21hgZbD19OR7T5enFfosujJ\nMY+bWmuv0HOFIMpJofF2V5zZ5yd9gpKPTVk1zCsFE7Fz4QhY5Tubkyk5jRw9Knku\nhCMm4CtxzQKBgQC0PqEdS/mCqtPvwwZZl6Ue7D7D6bU+D0Yt6os8lzkEyAvfyT6C\n5J+Gsgy6+mOb8CEiXNQuI4blDtYcTVqb+jYgnE5Tva7GmxAKptwp+tVs8IZEGRFD\n0K3bBOnohkkFaqxHw1LDEbAQvthJD0rNsvQuX8r6877zaXA6K8Egc+v2hwKBgDvu\njj8N/eLLkIbT6frhyrEWZ0YFNfebDQWmsQcFp2aKPliafQhAH9wBJm8GmZVg3mpQ\nle/ZXjgKMVUrmZMVZtPdNI/yS0XKruxB7ECb4yn/wNazPMDTxmazFwQKqbdyluv3\nqQriv3cIl/L4L+a4Ae9BcaPsOvZObudIQ6yQLfrNAoGAFWjZAlwLEOF3yLNVFeSA\nh+yFXNJG3IefoCgXSaHxghVGfMLW/RYen77H+L4pY8B2d+PvVtiqt3mNQqydentm\noJ0Ly7q6QS4Dh76hhMDhuJYqKX8e5bPvxUqDB+Tl9PNOH3g7hLPuxY6VxdMAmjF/\nlNfi7m8S0GJryKv2Go0sHqM=\n-----END PRIVATE KEY-----\n",
-    "client_email": "firebase-adminsdk-npav1@esplorado-c5207.iam.gserviceaccount.com",
-    "client_id": "113707747410150082229",
+    "project_id": "inventory-eec69",
+    "private_key_id": "b392ed4c8e7162543fdb9af0f4204f0bbcb73549",
+    "private_key": """-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCdkvWU+UfQnYFO
+PKdMaBjxFB/3NpsnYUQ1qPUHihA5MCvUjNOUufG4dKBFipBxr3mZLHc5AXr+pyJ2
+P6uGiVTHT37lyA91QXsKkDGICAHEX66zA0blqialcxj1fj+5taBxpxqWnlgSORwJ
+eRML5NDCYCmcalURY0P6mr8mAOBHT3th5/bXrdO1dVrDFxiu++zCX7qxGB0NZb4q
+pz4k9GHkzHtURiFPBGUNc5UJ0ls9hTv0VfgBxTfR7FZJOVAbzb36Xe3Dkk9l/APm
+3kJAh5t17E7Zzti5INRQNe9tei8kuUActFAdvWJwWSYgFxMP3DJzc3+FgOej6Dn+
+PO1d9hwXAgMBAAECggEAMAi+iD09YSDCbCEdNrN89vCVlfy1a1nBO0JX/4Zcz7IZ
+il+rl+jfAMW8nbZRtfYx8TmW1m/XGI3GeZmLJiXzDBb1rgJAhBQD+AJgtwEJ2Nz6
+GmPjVtt5kHH3p85miqwNTtgLyOJYIqX6IAEihzunT7mUtbPMXtKNxHUr09/sfpAH
+rva3FMo1vkhhue9uRYTlZBQ4Y2PJgHjM91dej6gXlbFh+PvFYuw8sMU+ZLvAwxwk
+N5C1z3jDkCl70U3oBHQQkAVpDg1w7SmggxsukpeQOIu9pKRmTIRvAKNeM5fDkrpC
+t+t1FMzKE+kqN3x/uRPFLX9WU3Lmn2LYHDq7XAbi0QKBgQDJNLH3lBR3ev2RzOb3
+U18Ap9FE0IyowinSmMkA9bbn7CIgA63+g7GUdPjLD89fjUm+bvGUiMTAeMNPDaLd
+SaP1j/sBknwG1eDwhvGXXPCLT/HklQwAExZXlWdg7GvlZIBhTTTgd6kqLYjZx2iG
++SpnkBNKVPxsxqhq3r+K/Dd3tQKBgQDIfGwsrv2CJtxZk9Z68Rzl1oTEWwuVdBTe
+um7pUOGvnSkRF0Rt8+xiR2skD1upxQfoze8E+qxQyqdzzy8ZRX0wirQzkrleY/D5
+BP/kjitqDPcu/FXWaD30bN3lrc2WbJLoxxBZyNusODaatYYKB/BssDcgx4dZcQCq
+7BgvEIAMGwKBgC1fh76YEyF6h9IoTfF6SJNCROvqx72Kw5mtQK7JumyEkJF9ovAh
+TJt44V4Re6dFmlqqdCoVyaDJ2ulp3s9eOu42gNky6ms0MhyrobGLkOcpqRfuEJ23
+sDMiCwUNa6t4RYcrvP/dnDVZvWG3GThO2iQullsN3Tq+dd5bywARroR9AoGBAKLW
+XE5Wu1UxFxwytawZlm0ftap+gIQdSq41IsyigwxOTAKzsULVMhQJCf658quLewcd
+7JtQtxDP6P5pM0oFZM8+eWrCK4l9B0ZbRzRuPNjgOwyQq2+AL4INwpVAe5FIEnK6
+7I7gU3woFEHIWlxfYmoFHmGjbk25ON+a73Gap0YtAoGAXgsZFIAtCVKKlMhcASUy
+mI6Zfx9AxZ0v1XAeazkHcKugRCLhlImu9KH0DqU7wHNdWQ9jQY/7bY9Q4XJyfM4E
+5yf3ir0hVb+LYoxys7grY6QyUaD36pcPtgXC0GYqXhhuFnkoROgIXmS5OCJSwpdk
+8tW5RBN4EPpWGOAWXYfPNv4=
+-----END PRIVATE KEY-----""",
+    "client_email": "firebase-adminsdk-fbsvc@inventory-eec69.iam.gserviceaccount.com",
+    "client_id": "105947406222937872714",
     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
     "token_uri": "https://oauth2.googleapis.com/token",
     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-npav1%40esplorado-c5207.iam.gserviceaccount.com",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-fbsvc%40inventory-eec69.iam.gserviceaccount.com",
     "universe_domain": "googleapis.com"
 }
 
