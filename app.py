@@ -12,23 +12,6 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "https://client-xqp2.onrender.com"}}) 
 
-# Initialize Firebase
-'''try:
-    cred = credentials.Certificate("inventory-eec69-firebase-adminsdk-fbsvc-7e4c13d95a.json")
-    firebase_admin.initialize_app(cred)
-    logger.info("Firebase initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize Firebase: {str(e)}")
-    raise
-
-db = firestore.client()'''
-import firebase_admin
-from firebase_admin import credentials, firestore
-import logging
-
-# Configure logging
-logger = logging.getLogger(__name__)
-
 # Hardcoded credentials dictionary
 cred_dict = {
     "type": "service_account",
@@ -71,25 +54,32 @@ s+tqqOWtY2lUmiF+hZ+CGfJx8GJZbsL+Cui4TtIQFnwKNdM6uTbG1c1ZYAFi9N0V
     "universe_domain": "googleapis.com"
 }
 
-try:
-    # Initialize Firebase with the hardcoded credentials
-    cred = credentials.Certificate(cred_dict)
-    firebase_admin.initialize_app(cred)
-    logger.info("Firebase initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize Firebase: {str(e)}")
-    raise
+# Global variable for Firestore client
+db = None
 
-# Initialize Firestore client
-db = firestore.client()
+def initialize_firebase():
+    global db
+    try:
+        # Initialize Firebase with the hardcoded credentials
+        cred = credentials.Certificate(cred_dict)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        logger.info("Firebase initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize Firebase: {str(e)}")
+        # Instead of raising, set db to None and let endpoints handle the lack of connection
+        db = None
 
-# User class (unchanged)
+# Call Firebase initialization at startup
+initialize_firebase()
+
+# User class
 class User:
     def __init__(self, doc_id, name, email, id, dept, password_hash, role='user'):
-        self.doc_id = doc_id  # Renamed for clarity (Firestore document ID)
+        self.doc_id = doc_id
         self.name = name
         self.email = email
-        self.id = id  # Renamed from local_id
+        self.id = id
         self.dept = dept
         self.password_hash = password_hash
         self.role = role
@@ -98,7 +88,7 @@ class User:
         return {
             'name': self.name,
             'email': self.email,
-            'id': self.id,  # Changed to 'id'
+            'id': self.id,
             'dept': self.dept,
             'password_hash': self.password_hash,
             'role': self.role
@@ -110,23 +100,30 @@ class User:
             doc_id=doc_id,
             name=data['name'],
             email=data['email'],
-            id=data['id'],  # Changed to 'id'
+            id=data['id'],
             dept=data['dept'],
             password_hash=data['password_hash'],
             role=data.get('role', 'user')
         )
 
 def check_existing_user(email, id):
-    logger.debug(f"Checking existing user with email: {email}, id: {id}")
-    email_query = db.collection('users').where(filter=firestore.FieldFilter('email', '==', email)).limit(1).stream()
-    for doc in email_query:
-        return doc.id
-    id_query = db.collection('users').where(filter=firestore.FieldFilter('id', '==', id)).limit(1).stream()
-    for doc in id_query:
-        return doc.id
-    return None
+    if not db:
+        logger.error("Firestore not initialized")
+        return None
+    try:
+        logger.debug(f"Checking existing user with email: {email}, id: {id}")
+        email_query = db.collection('users').where(filter=firestore.FieldFilter('email', '==', email)).limit(1).stream()
+        for doc in email_query:
+            return doc.id
+        id_query = db.collection('users').where(filter=firestore.FieldFilter('id', '==', id)).limit(1).stream()
+        for doc in id_query:
+            return doc.id
+        return None
+    except Exception as e:
+        logger.error(f"Error checking existing user: {str(e)}")
+        return None
 
-# Inventory class (unchanged)
+# Inventory class
 class InventoryItem:
     def __init__(self, id, name, category, sku, quantity, unit_price, image_url=None):
         self.id = id
@@ -160,23 +157,32 @@ class InventoryItem:
         )
 
 def check_existing_sku(sku, exclude_id=None):
-    logger.debug(f"Checking existing SKU: {sku}")
-    query = db.collection('inventory').where(filter=firestore.FieldFilter('sku', '==', sku)).stream()
-    for doc in query:
-        if exclude_id is None or doc.id != exclude_id:
-            return doc.id
-    return None
+    if not db:
+        logger.error("Firestore not initialized")
+        return None
+    try:
+        logger.debug(f"Checking existing SKU: {sku}")
+        query = db.collection('inventory').where(filter=firestore.FieldFilter('sku', '==', sku)).stream()
+        for doc in query:
+            if exclude_id is None or doc.id != exclude_id:
+                return doc.id
+        return None
+    except Exception as e:
+        logger.error(f"Error checking existing SKU: {str(e)}")
+        return None
 
-# Existing Routes (unchanged)
+# Routes with enhanced error handling
 @app.route('/register', methods=['POST'])
 def register():
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
         data = request.json
         logger.debug(f"Received registration data: {data}")
 
         name = data.get('name')
         email = data.get('email')
-        id = data.get('id')  # Renamed for consistency (matches frontend and Firestore)
+        id = data.get('id')
         dept = data.get('dept')
         password = data.get('password')
         role = data.get('role', 'user')
@@ -194,21 +200,17 @@ def register():
             logger.error("Invalid role selected")
             return jsonify({'success': False, 'message': 'Invalid role'}), 400
 
-        # Hash the password
         password_hash = generate_password_hash(password)
-
-        # Create user data
         user_data = {
             'name': name,
             'email': email,
-            'id': id,  # Use 'id' to match the frontend and Firestore
+            'id': id,
             'dept': dept,
             'password_hash': password_hash,
             'role': role
         }
         logger.debug(f"Saving user data to Firestore: {user_data}")
 
-        # Save to Firestore
         db.collection('users').document(id).set(user_data)
         logger.info(f"User {id} successfully saved to Firestore")
 
@@ -220,15 +222,23 @@ def register():
 
 @app.route('/inventory', methods=['GET'])
 def get_inventory():
-    inventory_ref = db.collection('inventory').stream()
-    items = [InventoryItem.from_dict(doc.id, doc.to_dict()) for doc in inventory_ref]
-    return jsonify({
-        'success': True,
-        'items': [{'id': item.id, 'name': item.name, 'category': item.category, 'sku': item.sku, 'quantity': item.quantity, 'unit_price': item.unit_price, 'image_url': item.image_url} for item in items]
-    }), 200
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        inventory_ref = db.collection('inventory').stream()
+        items = [InventoryItem.from_dict(doc.id, doc.to_dict()) for doc in inventory_ref]
+        return jsonify({
+            'success': True,
+            'items': [{'id': item.id, 'name': item.name, 'category': item.category, 'sku': item.sku, 'quantity': item.quantity, 'unit_price': item.unit_price, 'image_url': item.image_url} for item in items]
+        }), 200
+    except Exception as e:
+        logger.error(f"Error fetching inventory: {str(e)}")
+        return jsonify({'success': False, 'message': f'Error fetching inventory: {str(e)}'}), 500
 
 @app.route('/inventory', methods=['POST'])
 def add_inventory():
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
         logger.debug("Received POST request to /inventory")
         data = request.json
@@ -265,11 +275,13 @@ def add_inventory():
         return jsonify({'success': True, 'message': 'Item added successfully', 'id': new_item.id}), 201
 
     except Exception as e:
-        logger.exception("Error in add_inventory: %s", str(e))
+        logger.error(f"Error in add_inventory: {str(e)}")
         return jsonify({'success': False, 'message': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/inventory/<item_id>', methods=['PUT'])
 def update_inventory(item_id):
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
         logger.debug(f"Received PUT request to /inventory/{item_id}")
         data = request.json
@@ -311,11 +323,13 @@ def update_inventory(item_id):
         return jsonify({'success': True, 'message': 'Item updated successfully'}), 200
 
     except Exception as e:
-        logger.exception("Error in update_inventory: %s", str(e))
+        logger.error(f"Error in update_inventory: {str(e)}")
         return jsonify({'success': False, 'message': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/inventory/<item_id>', methods=['DELETE'])
 def delete_inventory(item_id):
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
         item_ref = db.collection('inventory').document(item_id)
         item = item_ref.get()
@@ -324,43 +338,50 @@ def delete_inventory(item_id):
         item_ref.delete()
         return jsonify({'success': True, 'message': 'Item deleted successfully'}), 200
     except Exception as e:
-        logger.exception("Error in delete_inventory: %s", str(e))
+        logger.error(f"Error in delete_inventory: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.json
-    role = data.get('role')
-    email = data.get('email')
-    password = data.get('password')
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        data = request.json
+        role = data.get('role')
+        email = data.get('email')
+        password = data.get('password')
 
-    if not all([role, email, password]):
-        return jsonify({'success': False, 'message': 'Missing fields'}), 400
+        if not all([role, email, password]):
+            return jsonify({'success': False, 'message': 'Missing fields'}), 400
 
-    if role not in ['user', 'admin']:
-        return jsonify({'success': False, 'message': 'Invalid role selected'}), 400
+        if role not in ['user', 'admin']:
+            return jsonify({'success': False, 'message': 'Invalid role selected'}), 400
 
-    users_ref = db.collection('users').where(filter=firestore.FieldFilter('email', '==', email)).limit(1).stream()
-    user = None
-    for doc in users_ref:
-        user = User.from_dict(doc.id, doc.to_dict())
-        break
+        users_ref = db.collection('users').where(filter=firestore.FieldFilter('email', '==', email)).limit(1).stream()
+        user = None
+        for doc in users_ref:
+            user = User.from_dict(doc.id, doc.to_dict())
+            break
 
-    if user and check_password_hash(user.password_hash, password):
-        if user.role != role:
-            return jsonify({'success': False, 'message': 'Role does not match'}), 400
-        return jsonify({
-            'success': True,
-            'message': 'Login successful',
-            'role': user.role,
-            'user': {'name': user.name, 'email': user.email, 'id': user.id, 'dept': user.dept}  # Changed to user.id
-        }), 200
-    else:
-        return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+        if user and check_password_hash(user.password_hash, password):
+            if user.role != role:
+                return jsonify({'success': False, 'message': 'Role does not match'}), 400
+            return jsonify({
+                'success': True,
+                'message': 'Login successful',
+                'role': user.role,
+                'user': {'name': user.name, 'email': user.email, 'id': user.id, 'dept': user.dept}
+            }), 200
+        else:
+            return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+    except Exception as e:
+        logger.error(f"Error in login: {str(e)}")
+        return jsonify({'success': False, 'message': f'Login failed: {str(e)}'}), 500
 
-# New Requests Endpoint
 @app.route('/requests', methods=['POST'])
 def create_request():
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
         logger.debug("Received POST request to /requests")
         data = request.json
@@ -374,14 +395,12 @@ def create_request():
             logger.error("Missing required fields in request data")
             return jsonify({'success': False, 'message': 'Missing required fields'}), 400
 
-        # Verify user exists
-        user_ref = db.collection('users').where(filter=firestore.FieldFilter('local_id', '==', user_id)).limit(1).stream()
+        user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', user_id)).limit(1).stream()
         user_exists = any(doc.exists for doc in user_ref)
         if not user_exists:
             logger.error(f"User {user_id} not found")
             return jsonify({'success': False, 'message': 'User not found'}), 404
 
-        # Verify product exists
         product_ref = db.collection('inventory').document(product_id)
         if not product_ref.get().exists:
             logger.error(f"Product {product_id} not found")
@@ -401,19 +420,20 @@ def create_request():
 
         return jsonify({'success': True, 'message': 'Request created successfully', 'requestId': request_ref.id}), 201
     except Exception as e:
-        logger.exception("Error in create_request: %s", str(e))
+        logger.error(f"Error in create_request: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
-# New Endpoints for Requests Page
+
 @app.route('/requests', methods=['GET'])
 def get_requests():
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
         requests_ref = db.collection('requests').stream()
         requests = []
         for doc in requests_ref:
             req = doc.to_dict()
             req['requestId'] = doc.id
-            # Fetch requester name
-            user_ref = db.collection('users').where(filter=firestore.FieldFilter('local_id', '==', req['userId'])).limit(1).stream()
+            user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', req['userId'])).limit(1).stream()
             requester_name = next((u.to_dict()['name'] for u in user_ref), 'Unknown')
             req['requester'] = requester_name
             requests.append(req)
@@ -424,6 +444,8 @@ def get_requests():
 
 @app.route('/requests/<request_id>', methods=['PUT'])
 def update_request(request_id):
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
         data = request.json
         status = data.get('status')
@@ -440,12 +462,11 @@ def update_request(request_id):
         logger.error(f"Error updating request: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
-
-
 @app.route('/requests/<request_id>', methods=['DELETE'])
 def delete_request(request_id):
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
-        # Get userId from request headers or body (assuming sent from frontend)
         data = request.json or {}
         user_id = data.get('userId')
         if not user_id:
@@ -466,20 +487,17 @@ def delete_request(request_id):
         logger.error(f"Error deleting request: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
-        
-
-# New Dashboard Endpoint
 @app.route('/dashboard', methods=['GET'])
 def get_dashboard_data():
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
-        # Inventory stats
         inventory_ref = db.collection('inventory').stream()
         inventory_items = [InventoryItem.from_dict(doc.id, doc.to_dict()) for doc in inventory_ref]
         total_items = len(inventory_items)
         total_value = sum(item.unit_price * item.quantity for item in inventory_items)
-        low_stock_items = [item.to_dict() for item in inventory_items if item.quantity < 5]  # Threshold: 5
+        low_stock_items = [item.to_dict() for item in inventory_items if item.quantity < 5]
 
-        # Orders (requests) stats
         requests_ref = db.collection('requests').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(5).stream()
         recent_orders = []
         total_orders = 0
@@ -492,7 +510,7 @@ def get_dashboard_data():
         for doc in requests_ref:
             req = doc.to_dict()
             req['requestId'] = doc.id
-            user_ref = db.collection('users').where(filter=firestore.FieldFilter('local_id', '==', req['userId'])).limit(1).stream()
+            user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', req['userId'])).limit(1).stream()
             req['requester'] = next((u.to_dict()['name'] for u in user_ref), 'Unknown')
             recent_orders.append(req)
 
@@ -511,6 +529,19 @@ def get_dashboard_data():
         logger.error(f"Error fetching dashboard data: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
-
+# Main execution with error handling
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    try:
+        app.run(debug=True, port=5000, host='0.0.0.0')
+    except Exception as e:
+        logger.critical(f"Failed to start Flask server: {str(e)}")
+        # Optionally, implement a retry mechanism or keep the process alive
+        while True:
+            try:
+                logger.info("Attempting to restart Flask server...")
+                app.run(debug=True, port=5000, host='0.0.0.0')
+                break
+            except Exception as retry_e:
+                logger.error(f"Restart attempt failed: {str(retry_e)}")
+                import time
+                time.sleep(5)  # Wait before retrying
