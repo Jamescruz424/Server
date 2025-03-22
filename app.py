@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "https://client-xqp2.onrender.com"}}) 
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Hardcoded credentials dictionary
 cred_dict = {
