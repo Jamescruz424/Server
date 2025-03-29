@@ -488,39 +488,7 @@ def serve_react_app(path):
     if path.startswith('api/'):
         return jsonify({'error': 'API route not found'}), 404
     return send_from_directory(app.static_folder, 'index.html')
-@app.route('/api/login', methods=['POST'])
-def login():
-    if not db:
-        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
-    try:
-        data = request.json
-        role = data.get('role')
-        email = data.get('email')
-        password = data.get('password')
 
-        if not all([role, email, password]):
-            return jsonify({'success': False, 'message': 'Missing fields'}), 400
-
-        if role not in ['user', 'admin']:
-            return jsonify({'success': False, 'message': 'Invalid role selected'}), 400
-
-        users_ref = db.collection('users').where(filter=firestore.FieldFilter('email', '==', email)).limit(1).stream()
-        user = None
-        for doc in users_ref:
-            user = User.from_dict(doc.id, doc.to_dict())
-            break
-
-        if user and check_password_hash(user.password_hash, password) and user.role == role:
-            return jsonify({
-                'success': True,
-                'message': 'Login successful',
-                'role': user.role,
-                'user': {'name': user.name, 'email': user.email, 'id': user.id, 'dept': user.dept}
-            }), 200
-        return jsonify({'success': False, 'message': 'Invalid credentials or role mismatch'}), 401
-    except Exception as e:
-        logger.error(f"Error during login: {str(e)}")
-        return jsonify({'success': False, 'message': str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))  # Use Render's PORT env var
