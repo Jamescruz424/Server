@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from flask import Flask, request, jsonify,send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Configure CORS
-cors_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "*")  # Default to all for debugging
+cors_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "*")  # Adjust for production
 CORS(app, resources={r"/*": {"origins": cors_allowed_origins}})
 
 # Hardcoded Firebase credentials (move to env var in production)
@@ -175,7 +175,7 @@ def check_existing_sku(sku, exclude_id=None):
         logger.error(f"Error checking existing SKU: {str(e)}")
         return None
 
-# Routes
+# API Routes
 @app.route('/register', methods=['POST'])
 def register():
     if not db:
@@ -462,7 +462,7 @@ def get_dashboard_data():
         for doc in requests_ref:
             req = doc.to_dict()
             req['requestId'] = doc.id
-            user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', req['userId'])).limit(1).stream()  # Fixed 'local_id' to 'id'
+            user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', req['userId'])).limit(1).stream()
             req['requester'] = next((u.to_dict()['name'] for u in user_ref), 'Unknown')
             recent_orders.append(req)
 
@@ -480,15 +480,6 @@ def get_dashboard_data():
     except Exception as e:
         logger.error(f"Error fetching dashboard data: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
-# Catch-all route to serve React's index.html for client-side routes
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve_react_app(path):
-    # Serve index.html for all non-API routes
-    if path.startswith('api/'):
-        return jsonify({'error': 'API route not found'}), 404
-    return send_from_directory(app.static_folder, 'index.html')
-
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))  # Use Render's PORT env var
