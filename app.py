@@ -3,7 +3,7 @@ import json
 import logging
 from flask import Flask, request, jsonify,send_from_directory
 from flask_cors import CORS
-import firebase_admin
+
 from firebase_admin import credentials, firestore
 from werkzeug.security import generate_password_hash, check_password_hash
 
