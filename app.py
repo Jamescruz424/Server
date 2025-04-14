@@ -440,18 +440,23 @@ def delete_request(request_id):
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/dashboard', methods=['GET'])
+@app.route('/dashboard', methods=['GET'])
 def get_dashboard_data():
     if not db:
         return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+
     try:
+        #Inventory data
         inventory_ref = db.collection('inventory').stream()
         inventory_items = [InventoryItem.from_dict(doc.id, doc.to_dict()) for doc in inventory_ref]
+
         total_items = len(inventory_items)
         total_value = sum(item.unit_price * item.quantity for item in inventory_items)
-        low_stock_items = [item.to_dict() for item in inventory_items if item.quantity < 5]
+        low_stock_items = [
+            item.to_dict() for item in inventory_items if item.quantity < 5
+        ]
 
-        requests_ref = db.collection('requests').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(5).stream()
-        recent_orders = []
+        #Request data
         total_orders = 0
         pending_orders = 0
         for doc in db.collection('requests').stream():
@@ -459,24 +464,37 @@ def get_dashboard_data():
             if doc.to_dict().get('status') == 'Pending':
                 pending_orders += 1
 
-        for doc in requests_ref:
+        recent_orders_ref = db.collection('requests') \
+            .order_by('timestamp', direction=firestore.Query.DESCENDING) \
+            .limit(5).stream()
+
+        recent_orders = []
+        for doc in recent_orders_ref:
             req = doc.to_dict()
             req['requestId'] = doc.id
-            user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', req['userId'])).limit(1).stream()  # Fixed 'local_id' to 'id'
-            req['requester'] = next((u.to_dict()['name'] for u in user_ref), 'Unknown')
+
+            #Fetch name
+            user_ref = db.collection('users') \
+                .where(filter=firestore.FieldFilter('id', '==', req['userId'])) \
+                .limit(1).stream()
+            req['requester'] = next(
+                (u.to_dict()['name'] for u in user_ref), 'Unknown'
+            )
+
             recent_orders.append(req)
 
-        return jsonify({
-            'success': True,
-            'data': {
-                'total_items': total_items,
-                'total_value': round(total_value, 2),
-                'low_stock_items': low_stock_items,
-                'total_orders': total_orders,
-                'pending_orders': pending_orders,
-                'recent_orders': recent_orders
-            }
-        }), 200
+        #Response data
+        dashboard_data = {
+            'total_items': total_items,
+            'total_value': round(total_value, 2),
+            'low_stock_items': low_stock_items,
+            'total_orders': total_orders,
+            'pending_orders': pending_orders,
+            'recent_orders': recent_orders,
+        }
+
+        return jsonify({'success': True, 'data': dashboard_data}), 200
+
     except Exception as e:
         logger.error(f"Error fetching dashboard data: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
