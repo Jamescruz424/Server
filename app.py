@@ -1,11 +1,13 @@
 import os
+from datetime import datetime, timedelta
 import json
 import logging
-from flask import Flask, request, jsonify,send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, storage
 from werkzeug.security import generate_password_hash, check_password_hash
+from collections import defaultdict
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -242,6 +244,170 @@ def login():
         logger.error(f"Error during login: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@app.route('/user-dashboard-data', methods=['GET'])
+def get_user_dashboard_data():
+    if not db:
+        logger.error("Database connection not initialized")
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        user_id = request.args.get('userId')
+        logger.debug(f"Fetching user dashboard data for user_id: {user_id}")
+        if not user_id:
+            logger.debug("No userId provided")
+            return jsonify({'success': False, 'message': 'User ID is required'}), 400
+
+        # Total assets
+        try:
+            total_assets = db.collection('inventory').count().get()[0][0].value
+        except Exception as e:
+            logger.error(f"Error counting inventory: {str(e)}")
+            total_assets = 0
+        logger.debug(f"Total assets: {total_assets}")
+
+        # Checked out (user-specific)
+        try:
+            checked_out = db.collection('requests')\
+                .where(filter=firestore.FieldFilter('issuedTo', '==', user_id))\
+                .where(filter=firestore.FieldFilter('issueDate', '!=', None))\
+                .where(filter=firestore.FieldFilter('returnDate', '==', None))\
+                .count().get()[0][0].value
+        except Exception as e:
+            logger.error(f"Error counting checked out for user {user_id}: {str(e)}")
+            checked_out = 0
+        logger.debug(f"Checked out for user {user_id}: {checked_out}")
+
+        # Available (total assets minus all checked-out assets)
+        try:
+            all_checked_out = db.collection('requests')\
+                .where(filter=firestore.FieldFilter('issueDate', '!=', None))\
+                .where(filter=firestore.FieldFilter('returnDate', '==', None))\
+                .count().get()[0][0].value
+            available = max(0, total_assets - all_checked_out)
+        except Exception as e:
+            logger.error(f"Error counting all checked out: {str(e)}")
+            available = total_assets
+        logger.debug(f"Available assets: {available}")
+
+        # Pending requests (user-specific)
+        try:
+            pending_requests = db.collection('requests')\
+                .where(filter=firestore.FieldFilter('userId', '==', user_id))\
+                .where(filter=firestore.FieldFilter('status', '==', 'Pending'))\
+                .count().get()[0][0].value
+        except Exception as e:
+            logger.error(f"Error counting pending requests for user {user_id}: {str(e)}")
+            pending_requests = 0
+        logger.debug(f"Pending requests for user {user_id}: {pending_requests}")
+
+        # Usage data (checked-out assets per day, last 7 days)
+        usage = []
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        for i in range(6, -1, -1):
+            date = today - timedelta(days=i)
+            next_date = date + timedelta(days=1)
+            try:
+                count = db.collection('requests')\
+                    .where(filter=firestore.FieldFilter('issuedTo', '==', user_id))\
+                    .where(filter=firestore.FieldFilter('issueDate', '>=', date.isoformat() + 'Z'))\
+                    .where(filter=firestore.FieldFilter('issueDate', '<', next_date.isoformat() + 'Z'))\
+                    .where(filter=firestore.FieldFilter('returnDate', '==', None))\
+                    .count().get()[0][0].value
+                usage.append({
+                    'day': date.strftime('%a'),
+                    'count': count
+                })
+            except Exception as e:
+                logger.error(f"Error counting usage for {date.strftime('%Y-%m-%d')}: {str(e)}")
+                usage.append({
+                    'day': date.strftime('%a'),
+                    'count': 0
+                })
+
+        # Categories (inventory distribution)
+        categories = []
+        try:
+            categories_dict = defaultdict(int)
+            inventory_docs = db.collection('inventory').stream()
+            for doc in inventory_docs:
+                category = doc.to_dict().get('category', 'Unknown')
+                categories_dict[category] += 1
+            categories = [
+                {'name': name, 'value': count} for name, count in categories_dict.items()
+            ] if categories_dict else [
+                {'name': 'Electronics', 'value': 0},
+                {'name': 'Furniture', 'value': 0},
+                {'name': 'Vehicles', 'value': 0},
+                {'name': 'Equipment', 'value': 0}
+            ]
+        except Exception as e:
+            logger.error(f"Error fetching categories: {str(e)}")
+            categories = [
+                {'name': 'Electronics', 'value': 0},
+                {'name': 'Furniture', 'value': 0},
+                {'name': 'Vehicles', 'value': 0},
+                {'name': 'Equipment', 'value': 0}
+            ]
+
+        logger.info(f"User dashboard data fetched for user {user_id}")
+        return jsonify({
+            'success': True,
+            'total_assets': total_assets,
+            'checked_out': checked_out,
+            'available': available,
+            'pending_requests': pending_requests,
+            'usage': usage,
+            'categories': categories
+        }), 200
+    except Exception as e:
+        logger.error(f"Error in user-dashboard-data for user_id {user_id}: {str(e)}")
+        return jsonify({'success': False, 'message': f'Internal server error: {str(e)}'}), 500
+
+@app.route('/history', methods=['GET'])
+def get_user_history():
+    if not db:
+        logger.error("Database connection not initialized")
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        user_id = request.args.get('userId')
+        logger.debug(f"Fetching history for user_id: {user_id}")
+        if not user_id:
+            logger.debug("No userId provided")
+            return jsonify({'success': False, 'message': 'User ID is required'}), 400
+
+        # Verify requests collection exists
+        requests_ref = db.collection('requests')
+        sample_doc = requests_ref.limit(1).get()
+        if not sample_doc:
+            logger.warning("Requests collection is empty or does not exist")
+            return jsonify({'success': True, 'requests': []}), 200
+
+        # Fetch user requests
+        requests_docs = requests_ref\
+            .where(filter=firestore.FieldFilter('userId', '==', user_id))\
+            .stream()
+        requests_list = []
+        for doc in requests_docs:
+            try:
+                req = doc.to_dict()
+                if not req.get('productName') or not req.get('status'):
+                    logger.debug(f"Request {doc.id} missing required fields: {req}")
+                    continue
+                req['requestId'] = doc.id
+                req['issueDate'] = req.get('issueDate', None)
+                req['returnDate'] = req.get('returnDate', None)
+                requests_list.append(req)
+            except Exception as e:
+                logger.error(f"Error processing request {doc.id}: {str(e)}")
+                continue
+
+        if not requests_list:
+            logger.debug(f"No requests found for user {user_id}")
+        logger.info(f"Fetched {len(requests_list)} history records for user {user_id}")
+        return jsonify({'success': True, 'requests': requests_list}), 200
+    except Exception as e:
+        logger.error(f"Error fetching user history for user_id {user_id}: {str(e)}")
+        return jsonify({'success': False, 'message': f'Internal server error: {str(e)}'}), 500
+
 @app.route('/inventory', methods=['GET'])
 def get_inventory():
     if not db:
@@ -295,20 +461,32 @@ def update_inventory(item_id):
     if not db:
         return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
     try:
-        data = request.json
-        name = data.get('name')
-        category = data.get('category')
-        sku = data.get('sku')
-        quantity = data.get('quantity')
-        unit_price = data.get('unit_price')
-        image_url = data.get('image_url')
+        logger.debug(f"Received form data: {dict(request.form)}")
+        name = request.form.get('name')
+        category = request.form.get('category')
+        sku = request.form.get('sku')
+        quantity = request.form.get('quantity')
+        unit_price = request.form.get('unit_price')
+        image_url = request.form.get('image_url')
 
         if not all([name, category, sku, quantity is not None, unit_price is not None]):
+            logger.error("Missing required fields")
             return jsonify({'success': False, 'message': 'Missing required fields'}), 400
 
-        if not isinstance(quantity, int) or quantity < 0:
+        try:
+            quantity = int(quantity)
+        except (ValueError, TypeError):
+            logger.error(f"Invalid quantity: {quantity}")
+            return jsonify({'success': False, 'message': 'Quantity must be an integer'}), 400
+        if quantity < 0:
             return jsonify({'success': False, 'message': 'Quantity must be a non-negative integer'}), 400
-        if not isinstance(unit_price, (int, float)) or unit_price < 0:
+
+        try:
+            unit_price = float(unit_price)
+        except (ValueError, TypeError):
+            logger.error(f"Invalid unit price: {unit_price}")
+            return jsonify({'success': False, 'message': 'Unit price must be a number'}), 400
+        if unit_price < 0:
             return jsonify({'success': False, 'message': 'Unit price must be a non-negative number'}), 400
 
         existing_sku_id = check_existing_sku(sku, exclude_id=item_id)
@@ -422,84 +600,302 @@ def delete_request(request_id):
     try:
         data = request.json or {}
         user_id = data.get('userId')
+        logger.debug(f"DELETE request for request_id: {request_id}, user_id: {user_id}")
         if not user_id:
+            logger.debug("No userId provided in request body")
+            return jsonify({'success': False, 'message': 'User ID is required'}), 400
+
+        # Check user role
+        user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', user_id)).limit(1).stream()
+        user_doc = next(user_ref, None)
+        if not user_doc:
+            logger.debug(f"User ID {user_id} not found in users collection")
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+
+        user_data = user_doc.to_dict()
+        logger.debug(f"User {user_id} role: {user_data.get('role')}")
+
+        # Fetch request
+        request_ref = db.collection('requests').document(request_id)
+        request_doc = request_ref.get()
+        if not request_doc.exists:
+            logger.debug(f"Request ID {request_id} not found in requests collection")
+            return jsonify({'success': False, 'message': 'Request not found'}), 404
+
+        request_data = request_doc.to_dict()
+        # Allow deletion if user is admin and request is Pending, or if userId matches for non-admins
+        if user_data.get('role') == 'admin' and request_data.get('status') == 'Pending':
+            logger.debug(f"Admin {user_id} deleting Pending request {request_id}")
+        elif user_data.get('role') != 'admin' and request_data.get('userId') != user_id:
+            logger.debug(f"User {user_id} not authorized to delete request {request_id}")
+            return jsonify({'success': False, 'message': 'You can only delete your own requests'}), 403
+
+        request_ref.delete()
+        logger.debug(f"Request {request_id} deleted successfully")
+        return jsonify({'success': True, 'message': 'Request deleted successfully'}), 200
+    except Exception as e:
+        logger.error(f"Error deleting request {request_id}: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/issue/<request_id>', methods=['POST'])
+def issue_request(request_id):
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        data = request.json or {}
+        admin_id = data.get('adminId')
+        logger.debug(f"Issue request for request_id: {request_id}, admin_id: {admin_id}")
+        if not admin_id:
+            logger.debug("No adminId provided in request body")
+            return jsonify({'success': False, 'message': 'Admin ID is required'}), 400
+
+        user_ref = db.collection('users').where(filter=firestore.FieldFilter('id', '==', admin_id)).limit(1).stream()
+        user_doc = next(user_ref, None)
+        if not user_doc or user_doc.to_dict().get('role') != 'admin':
+            logger.debug(f"User {admin_id} is not an admin")
+            return jsonify({'success': False, 'message': 'Only admins can issue items'}), 403
+
+        request_ref = db.collection('requests').document(request_id)
+        request_doc = request_ref.get()
+        if not request_doc.exists:
+            logger.debug(f"Request ID {request_id} not found")
+            return jsonify({'success': False, 'message': 'Request not found'}), 404
+
+        request_data = request_doc.to_dict()
+        if request_data.get('status') != 'Approved':
+            logger.debug(f"Request {request_id} is not Approved")
+            return jsonify({'success': False, 'message': 'Only approved requests can be issued'}), 400
+        if request_data.get('issueDate'):
+            logger.debug(f"Request {request_id} already issued")
+            return jsonify({'success': False, 'message': 'Request already issued'}), 400
+
+        issue_date = datetime.utcnow().isoformat() + 'Z'
+        request_ref.update({
+            'adminId': admin_id,
+            'issueDate': issue_date,
+            'issuedTo': request_data['userId'],
+            'status': 'Issued'
+        })
+        logger.debug(f"Request {request_id} issued by admin {admin_id}")
+        return jsonify({'success': True, 'message': 'Item issued successfully', 'issueDate': issue_date}), 200
+    except Exception as e:
+        logger.error(f"Error issuing request {request_id}: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/return/<request_id>', methods=['POST'])
+def return_request(request_id):
+    if not db:
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        data = request.json or {}
+        user_id = data.get('userId')
+        logger.debug(f"Return request for request_id: {request_id}, user_id: {user_id}")
+        if not user_id:
+            logger.debug("No userId provided in request body")
             return jsonify({'success': False, 'message': 'User ID is required'}), 400
 
         request_ref = db.collection('requests').document(request_id)
         request_doc = request_ref.get()
         if not request_doc.exists:
+            logger.debug(f"Request ID {request_id} not found")
             return jsonify({'success': False, 'message': 'Request not found'}), 404
 
-        if request_doc.to_dict()['userId'] != user_id:
-            return jsonify({'success': False, 'message': 'You can only delete your own requests'}), 403
+        request_data = request_doc.to_dict()
+        if not request_data.get('issueDate'):
+            logger.debug(f"Request {request_id} not issued")
+            return jsonify({'success': False, 'message': 'Request not issued'}), 400
+        if request_data.get('returnDate'):
+            logger.debug(f"Request {request_id} already returned")
+            return jsonify({'success': False, 'message': 'Request already returned'}), 400
+        if request_data.get('issuedTo') != user_id:
+            logger.debug(f"User {user_id} not authorized to return request {request_id}")
+            return jsonify({'success': False, 'message': 'You can only return items issued to you'}), 403
 
-        request_ref.delete()
-        return jsonify({'success': True, 'message': 'Request deleted successfully'}), 200
+        return_date = datetime.utcnow().isoformat() + 'Z'
+        request_ref.update({
+            'returnDate': return_date,
+            'status': 'Returned'
+        })
+        logger.debug(f"Request {request_id} returned by user {user_id}")
+        return jsonify({'success': True, 'message': 'Item returned successfully', 'returnDate': return_date}), 200
     except Exception as e:
-        logger.error(f"Error deleting request: {str(e)}")
+        logger.error(f"Error returning request {request_id}: {str(e)}")
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@app.route('/dashboard', methods=['GET'])
-@app.route('/dashboard', methods=['GET'])
-def get_dashboard_data():
+@app.route('/scan-qr', methods=['POST'])
+def scan_qr():
     if not db:
         return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
-
     try:
-        #Inventory data
-        inventory_ref = db.collection('inventory').stream()
-        inventory_items = [InventoryItem.from_dict(doc.id, doc.to_dict()) for doc in inventory_ref]
+        data = request.json or {}
+        qr_data = data.get('qrData')
+        user_id = data.get('userId')
+        logger.debug(f"Scanning QR: qr_data={qr_data}, user_id={user_id}")
+        if not qr_data or not user_id:
+            logger.debug("Missing qrData or userId")
+            return jsonify({'success': False, 'message': 'QR data and user ID are required'}), 400
 
-        total_items = len(inventory_items)
-        total_value = sum(item.unit_price * item.quantity for item in inventory_items)
-        low_stock_items = [
-            item.to_dict() for item in inventory_items if item.quantity < 5
-        ]
+        # Assume qr_data is in format "requestId:<id>"
+        if not qr_data.startswith('requestId:'):
+            logger.debug("Invalid QR format")
+            return jsonify({'success': False, 'message': 'Invalid QR code format'}), 400
 
-        #Request data
-        total_orders = 0
-        pending_orders = 0
-        for doc in db.collection('requests').stream():
-            total_orders += 1
-            if doc.to_dict().get('status') == 'Pending':
-                pending_orders += 1
+        request_id = qr_data.replace('requestId:', '')
+        request_ref = db.collection('requests').document(request_id)
+        request_doc = request_ref.get()
+        if not request_doc.exists:
+            logger.debug(f"Request ID {request_id} not found")
+            return jsonify({'success': False, 'message': 'Request not found'}), 404
 
-        recent_orders_ref = db.collection('requests') \
-            .order_by('timestamp', direction=firestore.Query.DESCENDING) \
-            .limit(5).stream()
+        request_data = request_doc.to_dict()
+        if not request_data.get('issueDate'):
+            logger.debug(f"Request {request_id} not issued")
+            return jsonify({'success': False, 'message': 'Item not issued'}), 400
+        if request_data.get('returnDate'):
+            logger.debug(f"Request {request_id} already returned")
+            return jsonify({'success': False, 'message': 'Item already returned'}), 400
 
+        issued_to_user = request_data.get('issuedTo') == user_id
+        return jsonify({
+            'success': True,
+            'requestId': request_id,
+            'issuedToUser': issued_to_user
+        }), 200
+    except Exception as e:
+        logger.error(f"Error scanning QR: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@app.route('/dashboard-data', methods=['GET'])
+def get_dashboard_data():
+    if not db:
+        logger.error("Database connection not initialized")
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        logger.debug("Starting admin dashboard data fetch")
+
+        # Total items and value
+        inventory_docs = db.collection('inventory').stream()
+        total_items = 0
+        total_value = 0
+        low_stock_items = []
+        for doc in inventory_docs:
+            item = doc.to_dict()
+            total_items += 1
+            item_value = item.get('unit_price', 0) * item.get('quantity', 0)
+            total_value += item_value
+            if item.get('quantity', 0) <= 5:  # Low stock threshold
+                low_stock_items.append({
+                    'id': doc.id,
+                    'name': item.get('name', 'Unknown'),
+                    'category': item.get('category', 'Unknown'),
+                    'quantity': item.get('quantity', 0)
+                })
+        logger.debug(f"Inventory: {total_items} items, ${total_value}, {len(low_stock_items)} low stock")
+
+        # Orders
+        total_orders = db.collection('requests').count().get()[0][0].value
+        pending_orders = db.collection('requests')\
+            .where(filter=firestore.FieldFilter('status', '==', 'Pending'))\
+            .count().get()[0][0].value
+        logger.debug(f"Orders: {total_orders} total, {pending_orders} pending")
+
+        # Recent orders (last 5)
         recent_orders = []
-        for doc in recent_orders_ref:
+        recent_docs = db.collection('requests')\
+            .order_by('timestamp', direction=firestore.Query.DESCENDING)\
+            .limit(5)\
+            .stream()
+        for doc in recent_docs:
             req = doc.to_dict()
-            req['requestId'] = doc.id
+            user_doc = db.collection('users').document(req.get('userId')).get()
+            recent_orders.append({
+                'requestId': doc.id,
+                'status': req.get('status', 'Unknown'),
+                'requester': user_doc.to_dict().get('name', req.get('userId', 'Unknown')) if user_doc.exists else 'Unknown',
+                'productName': req.get('productName', 'Unknown'),
+                'timestamp': req.get('timestamp', datetime.utcnow().isoformat() + 'Z')
+            })
+        logger.debug(f"Recent orders: {len(recent_orders)} fetched")
 
-            #Fetch name
-            user_ref = db.collection('users') \
-                .where(filter=firestore.FieldFilter('id', '==', req['userId'])) \
-                .limit(1).stream()
-            req['requester'] = next(
-                (u.to_dict()['name'] for u in user_ref), 'Unknown'
-            )
-
-            recent_orders.append(req)
-
-        #Response data
-        dashboard_data = {
+        data = {
             'total_items': total_items,
             'total_value': round(total_value, 2),
             'low_stock_items': low_stock_items,
             'total_orders': total_orders,
             'pending_orders': pending_orders,
-            'recent_orders': recent_orders,
+            'recent_orders': recent_orders
         }
 
-        return jsonify({'success': True, 'data': dashboard_data}), 200
-
+        logger.info("Admin dashboard data fetched successfully")
+        return jsonify({'success': True, 'data': data}), 200
     except Exception as e:
-        logger.error(f"Error fetching dashboard data: {str(e)}")
-        return jsonify({'success': False, 'message': str(e)}), 500
+        logger.error(f"Error in dashboard-data: {str(e)}")
+        return jsonify({'success': False, 'message': f'Internal server error: {str(e)}'}), 500
+@app.route('/asset-history/<asset_id>', methods=['GET'])
+def get_asset_history(asset_id):
+    if not db:
+        logger.error("Database connection not initialized")
+        return jsonify({'success': False, 'message': 'Database connection not initialized'}), 503
+    try:
+        logger.debug(f"Received request for asset history, asset_id: {asset_id}")
+        asset_ref = db.collection('inventory').document(asset_id)
+        asset_doc = asset_ref.get()
+        logger.debug(f"Asset exists: {asset_doc.exists}")
+        if not asset_doc.exists:
+            logger.debug(f"Asset ID {asset_id} not found")
+            return jsonify({'success': False, 'message': 'Asset not found'}), 404
 
+        requests_ref = db.collection('requests')\
+            .where(filter=firestore.FieldFilter('productId', '==', asset_id))\
+            .order_by('timestamp', direction=firestore.Query.ASCENDING)\
+            .stream()
+        
+        history = []
+        for doc in requests_ref:
+            req = doc.to_dict()
+            logger.debug(f"Processing request {doc.id}: {req}")
+            user_doc = db.collection('users').document(req.get('userId')).get()
+            user_name = user_doc.to_dict().get('name', req.get('userId', 'Unknown')) if user_doc.exists else 'Unknown'
 
+            history.append({
+                'assetId': asset_id,
+                'date': req.get('timestamp'),
+                'action': 'Requested',
+                'user': user_name,
+                'details': f"Request for {req.get('productName')} (Status: {req.get('status')})"
+            })
+
+            if req.get('issueDate'):
+                admin_doc = db.collection('users').document(req.get('adminId', '')).get()
+                admin_name = admin_doc.to_dict().get('name', 'Unknown') if admin_doc.exists else 'Unknown'
+                history.append({
+                    'assetId': asset_id,
+                    'date': req.get('issueDate'),
+                    'action': 'Issued',
+                    'user': user_name,
+                    'details': f"Issued by admin {admin_name}"
+                })
+
+            if req.get('returnDate'):
+                history.append({
+                    'assetId': asset_id,
+                    'date': req.get('returnDate'),
+                    'action': 'Returned',
+                    'user': user_name,
+                    'details': f"Returned by {user_name}"
+                })
+
+        logger.info(f"Fetched {len(history)} history records for asset {asset_id}")
+        return jsonify({'success': True, 'data': history}), 200
+    except Exception as e:
+        logger.error(f"Error fetching asset history for asset_id {asset_id}: {str(e)}")
+        if "The query requires an index" in str(e):
+            return jsonify({
+                'success': False,
+                'message': 'Firestore query requires an index. Please create it in the Firebase console.',
+                'error': str(e)
+            }), 400
+        return jsonify({'success': False, 'message': f'Internal server error: {str(e)}'}), 500
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))  # Use Render's PORT env var
