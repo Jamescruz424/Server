@@ -8,6 +8,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore, storage
 from werkzeug.security import generate_password_hash, check_password_hash
 from collections import defaultdict
+import google.generativeai as genai
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -361,7 +362,55 @@ def get_user_dashboard_data():
     except Exception as e:
         logger.error(f"Error in user-dashboard-data for user_id {user_id}: {str(e)}")
         return jsonify({'success': False, 'message': f'Internal server error: {str(e)}'}), 500
+GEMINI_API_KEY = "AIzaSyBkCxP-RwWc4-qqBfFvJ9HKxlBLlgN4g2w"
+if not GEMINI_API_KEY:
+    logging.critical("GEMINI_API_KEY not set")
+    raise ValueError("GEMINI_API_KEY is required")
+genai.configure(api_key=GEMINI_API_KEY)
 
+# Gemini model configuration
+generation_config = {
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_output_tokens": 8192,
+    "response_mime_type": "text/plain",
+}
+gemini_model = genai.GenerativeModel(
+    model_name="gemini-1.5-flash",
+    generation_config=generation_config,
+)
+
+def generate_gemini_response(input_text):
+    """Generate a response from the Gemini model."""
+    try:
+        response = gemini_model.generate_content([
+            "input: who are you",
+            "output: I am an AI Agent chatbot",
+            "input: What all can you do?",
+            "output: I can help you with instructions to navigate and troubleshoot issues in this inventory management system.",
+            f"input: {input_text}",
+            "output: ",
+        ])
+        return response.text
+    except Exception as e:
+        logging.error(f"Error generating Gemini response: {str(e)}")
+        raise
+
+@app.route('/chat', methods=['POST', 'OPTIONS'])
+def chat():
+    if request.method == 'OPTIONS':
+        return '', 200
+    try:
+        data = request.json
+        message = data.get('message')
+        if not message:
+            return jsonify({'success': False, 'message': 'Message is required'}), 400
+        bot_response = generate_gemini_response(message)
+        return jsonify({'success': True, 'response': bot_response}), 200
+    except Exception as e:
+        logging.error(f"Error in chat endpoint: {str(e)}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 @app.route('/history', methods=['GET'])
 def get_user_history():
     if not db:
